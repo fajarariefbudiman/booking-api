@@ -7,7 +7,7 @@ import (
 
 func SetupRoutes(r *gin.Engine, h *Handlers) {
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "https://booking-app.vercel.app"},
+		AllowOrigins:     []string{"http://localhost:5173", "https://ruko-space.vercel.app"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
