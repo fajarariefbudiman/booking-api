@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -186,7 +187,6 @@ func (h *Handlers) MarkRukoRentedOffline(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "ruko marked as rented offline"})
 }
 
-// CreateBooking (simple)
 // CreateBooking
 func (h *Handlers) CreateBooking(c *gin.Context) {
 	var in struct {
@@ -194,8 +194,10 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 		TenantID      string `json:"tenant_id" binding:"required"`
 		StartDateStr  string `json:"start_date" binding:"required"`
 		EndDateStr    string `json:"end_date" binding:"required"`
-		PaymentMethod string `json:"payment_method" binding:"required"` // online/offline
+		PaymentMethod string `json:"payment_method" binding:"required"`
+		DiscountCode  string `json:"discount_code"`
 	}
+
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -203,33 +205,62 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 
 	rukoOID, _ := primitive.ObjectIDFromHex(in.RukoID)
 	tenantOID, _ := primitive.ObjectIDFromHex(in.TenantID)
+
 	startDate, _ := time.Parse("2006-01-02", in.StartDateStr)
 	endDate, _ := time.Parse("2006-01-02", in.EndDateStr)
 
+	// ambil ruko
 	var r Ruko
 	if err := h.db.Collection("ruko").FindOne(context.Background(), bson.M{"_id": rukoOID}).Decode(&r); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ruko not found"})
 		return
 	}
 
-	// compute price
+	// HITUNG duration
 	months := calculateMonthsBetween(startDate, endDate)
-	if months < 1 {
-		months = 1
-	}
-	total := r.Price * float64(months)
-	if r.DiscountPercent > 0 {
-		total = total * (1 - r.DiscountPercent/100.0)
+	years := calculateYearsBetween(startDate, endDate)
+
+	if r.RentalType == "monthly" {
+		if months < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "minimal sewa 1 bulan"})
+			return
+		}
+	} else if r.RentalType == "yearly" {
+		if years < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "minimal sewa 1 tahun"})
+			return
+		}
 	}
 
+	// hitung subtotal
+	var subtotal float64
+	if r.RentalType == "monthly" {
+		subtotal = r.Price * float64(months)
+	} else {
+		subtotal = r.Price * float64(years)
+	}
+
+	// tax 10%
+	tax := subtotal * 0.10
+
+	// discount
+	var discountPercent float64 = 0
+	if strings.ToUpper(in.DiscountCode) == "PROMO10" {
+		discountPercent = 0.10
+	}
+
+	discountAmount := subtotal * discountPercent
+	total := subtotal + tax - discountAmount
+
 	now := time.Now()
+
 	booking := Booking{
 		RukoID:        rukoOID,
 		TenantID:      tenantOID,
 		StartDate:     startDate,
 		EndDate:       endDate,
 		TotalPrice:    total,
-		PaymentStatus: "pending", // default pending
+		PaymentStatus: "pending",
 		BookingStatus: "waiting",
 		PaymentMethod: in.PaymentMethod,
 		CreatedAt:     now,
@@ -243,7 +274,7 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 	}
 	booking.ID = res.InsertedID.(primitive.ObjectID)
 
-	// LOCK RUKO langsung setelah booking create
+	// LOCK
 	_, _ = h.db.Collection("ruko").UpdateByID(context.Background(), rukoOID, bson.M{
 		"$set": bson.M{
 			"is_available": false,
@@ -252,6 +283,16 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusCreated, booking)
+}
+
+func calculateYearsBetween(a, b time.Time) int {
+	ay, _, _ := a.Date()
+	by, _, _ := b.Date()
+	years := by - ay
+	if years <= 0 {
+		return 1
+	}
+	return years
 }
 
 func calculateMonthsBetween(a, b time.Time) int {
