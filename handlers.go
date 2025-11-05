@@ -187,11 +187,12 @@ func (h *Handlers) MarkRukoRentedOffline(c *gin.Context) {
 }
 
 // CreateBooking (simple)
+// CreateBooking
 func (h *Handlers) CreateBooking(c *gin.Context) {
 	var in struct {
 		RukoID        string `json:"ruko_id" binding:"required"`
 		TenantID      string `json:"tenant_id" binding:"required"`
-		StartDateStr  string `json:"start_date" binding:"required"` // yyyy-mm-dd
+		StartDateStr  string `json:"start_date" binding:"required"`
 		EndDateStr    string `json:"end_date" binding:"required"`
 		PaymentMethod string `json:"payment_method" binding:"required"` // online/offline
 	}
@@ -199,19 +200,19 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
 	rukoOID, _ := primitive.ObjectIDFromHex(in.RukoID)
 	tenantOID, _ := primitive.ObjectIDFromHex(in.TenantID)
 	startDate, _ := time.Parse("2006-01-02", in.StartDateStr)
 	endDate, _ := time.Parse("2006-01-02", in.EndDateStr)
 
-	// fetch ruko to compute price (apply discount if any)
 	var r Ruko
 	if err := h.db.Collection("ruko").FindOne(context.Background(), bson.M{"_id": rukoOID}).Decode(&r); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ruko not found"})
 		return
 	}
 
-	// compute simple total: price * months (for simplicity). You can complexify later.
+	// compute price
 	months := calculateMonthsBetween(startDate, endDate)
 	if months < 1 {
 		months = 1
@@ -228,7 +229,7 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 		StartDate:     startDate,
 		EndDate:       endDate,
 		TotalPrice:    total,
-		PaymentStatus: "pending",
+		PaymentStatus: "pending", // default pending
 		BookingStatus: "waiting",
 		PaymentMethod: in.PaymentMethod,
 		CreatedAt:     now,
@@ -242,7 +243,14 @@ func (h *Handlers) CreateBooking(c *gin.Context) {
 	}
 	booking.ID = res.InsertedID.(primitive.ObjectID)
 
-	// If paymentMethod == offline, we let owner verify later; if online maybe create payment entry after gateway callback.
+	// LOCK RUKO langsung setelah booking create
+	_, _ = h.db.Collection("ruko").UpdateByID(context.Background(), rukoOID, bson.M{
+		"$set": bson.M{
+			"is_available": false,
+			"updated_at":   time.Now(),
+		},
+	})
+
 	c.JSON(http.StatusCreated, booking)
 }
 
