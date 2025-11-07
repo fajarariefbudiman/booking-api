@@ -17,39 +17,52 @@ func SetupRoutes(r *gin.Engine, h *Handlers) {
 	r.GET("/", func(ctx *gin.Context) {
 		ctx.JSON(200, "Hello World")
 	})
+
 	api := r.Group("/api")
 	{
 		// auth
-		api.POST("/auth/register", h.Register) //finished
-		api.POST("/auth/login", h.Login)       //finished
+		api.POST("/auth/register", h.Register)
+		api.POST("/auth/login", h.Login)
 
 		// public ruko listing
-		api.GET("/ruko", h.ListRuko)    //finished
-		api.GET("/ruko/:id", h.GetRuko) //finished
+		api.GET("/ruko", h.ListRuko)
+		api.GET("/ruko/:id", h.GetRuko)
 
-		// routes requiring authentication
+		// authenticated routes
 		authed := api.Group("/")
 		authed.Use(AuthMiddleware())
 		{
-			authed.POST("/bookings", h.CreateBooking) //finished
-			authed.GET("/bookings", h.ListBookings)   //finished
-			authed.GET("/bookings/:id", h.GetBooking) //finished
+			authed.POST("/bookings", h.CreateBooking)
+			authed.GET("/bookings", h.ListBookings)
+			authed.GET("/bookings/:id", h.GetBooking)
 
-			authed.POST("/payments", h.CreatePayment) //finished
-			authed.GET("/payments/:id", h.GetPayment) //finished
+			authed.POST("/payments", h.CreatePayment)
+			authed.GET("/payments/:id", h.GetPayment)
 
-			// owner-only endpoints
+			// owner-only routes
 			owner := authed.Group("/")
 			owner.Use(RoleMiddleware("owner", "admin"))
 			{
-				owner.POST("/ruko", h.CreateRuko)                                     //finished
-				owner.PATCH("/ruko/:id/rented-offline", h.MarkRukoRentedOffline)      //finished
-				owner.PATCH("/bookings/:id/confirm-offline", h.ConfirmBookingOffline) //finished
+				owner.POST("/ruko", h.CreateRuko)
+				owner.PATCH("/ruko/:id/rented-offline", h.MarkRukoRentedOffline)
+				owner.PATCH("/bookings/:id/confirm-offline", h.ConfirmBookingOffline)
+
+				// owner dashboard endpoints
+				owner.GET("/:ownerId/stats", h.GetOwnerStats)
+				owner.GET("/:ownerId/rukos", h.GetOwnerRukos)
+				owner.GET("/:ownerId/bookings/pending", h.GetPendingBookings)
+				owner.GET("/:ownerId/bookings", h.GetAllBookings)
+				owner.GET("/:ownerId/income", h.GetIncomeData)
+				owner.GET("/:ownerId/activities/recent", h.GetRecentActivities)
 			}
 
-			// admin or owner may access discounts/rental history
-			authed.GET("/discounts", h.ListDiscounts)   //finished
-			authed.POST("/discounts", h.CreateDiscount) //finished
+			// accept/reject booking
+			authed.PUT("/bookings/:id/accept", h.AcceptBooking)
+			authed.PUT("/bookings/:id/reject", h.RejectBooking)
+
+			// admin/owner discounts & rental history
+			authed.GET("/discounts", h.ListDiscounts)
+			authed.POST("/discounts", h.CreateDiscount)
 			authed.GET("/rental-history", h.ListRentalHistory)
 		}
 	}

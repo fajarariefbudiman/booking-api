@@ -634,3 +634,149 @@ func (h *Handlers) Login(c *gin.Context) {
 		"expires_at":   exp,
 	})
 }
+
+// --- Owner Stats ---
+func (h *Handlers) GetOwnerStats(c *gin.Context) {
+	ownerId := c.Param("ownerId")
+	oid, _ := primitive.ObjectIDFromHex(ownerId)
+
+	// contoh: total rukos, total bookings, total income
+	totalRukos, _ := h.db.Collection("ruko").CountDocuments(context.Background(), bson.M{"owner_id": oid})
+	totalBookings, _ := h.db.Collection("bookings").CountDocuments(context.Background(), bson.M{"ruko_id": bson.M{"$in": getOwnerRukoIDs(h, oid)}})
+
+	// total income
+	cursor, _ := h.db.Collection("bookings").Find(context.Background(), bson.M{"ruko_id": bson.M{"$in": getOwnerRukoIDs(h, oid)}, "booking_status": "confirmed"})
+	var bookings []Booking
+	cursor.All(context.Background(), &bookings)
+	var totalIncome float64
+	for _, b := range bookings {
+		totalIncome += b.TotalPrice
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_rukos":    totalRukos,
+		"total_bookings": totalBookings,
+		"total_income":   totalIncome,
+	})
+}
+
+// helper: get ruko IDs owned by owner
+func getOwnerRukoIDs(h *Handlers, ownerOID primitive.ObjectID) []primitive.ObjectID {
+	cursor, _ := h.db.Collection("ruko").Find(context.Background(), bson.M{"owner_id": ownerOID})
+	var rukos []Ruko
+	cursor.All(context.Background(), &rukos)
+	ids := make([]primitive.ObjectID, len(rukos))
+	for i, r := range rukos {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// --- Fetch Owner Rukos ---
+func (h *Handlers) GetOwnerRukos(c *gin.Context) {
+	ownerId := c.Param("ownerId")
+	oid, _ := primitive.ObjectIDFromHex(ownerId)
+	cursor, _ := h.db.Collection("ruko").Find(context.Background(), bson.M{"owner_id": oid})
+	var rukos []Ruko
+	cursor.All(context.Background(), &rukos)
+	c.JSON(http.StatusOK, rukos)
+}
+
+// --- Fetch Pending Bookings ---
+func (h *Handlers) GetPendingBookings(c *gin.Context) {
+	ownerId := c.Param("ownerId")
+	oid, _ := primitive.ObjectIDFromHex(ownerId)
+	rukoIDs := getOwnerRukoIDs(h, oid)
+	cursor, _ := h.db.Collection("bookings").Find(context.Background(), bson.M{"ruko_id": bson.M{"$in": rukoIDs}, "booking_status": "waiting"})
+	var bookings []Booking
+	cursor.All(context.Background(), &bookings)
+	c.JSON(http.StatusOK, bookings)
+}
+
+// --- Fetch All Bookings ---
+func (h *Handlers) GetAllBookings(c *gin.Context) {
+	ownerId := c.Param("ownerId")
+	oid, _ := primitive.ObjectIDFromHex(ownerId)
+	rukoIDs := getOwnerRukoIDs(h, oid)
+	cursor, _ := h.db.Collection("bookings").Find(context.Background(), bson.M{"ruko_id": bson.M{"$in": rukoIDs}})
+	var bookings []Booking
+	cursor.All(context.Background(), &bookings)
+	c.JSON(http.StatusOK, bookings)
+}
+
+// --- Accept Booking ---
+func (h *Handlers) AcceptBooking(c *gin.Context) {
+	bookingId := c.Param("id")
+	oid, _ := primitive.ObjectIDFromHex(bookingId)
+	_, err := h.db.Collection("bookings").UpdateOne(context.Background(), bson.M{"_id": oid},
+		bson.M{"$set": bson.M{"booking_status": "confirmed", "updated_at": time.Now()}})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to accept booking"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "booking accepted"})
+}
+
+// --- Reject Booking ---
+func (h *Handlers) RejectBooking(c *gin.Context) {
+	bookingId := c.Param("id")
+	oid, _ := primitive.ObjectIDFromHex(bookingId)
+	_, err := h.db.Collection("bookings").UpdateOne(context.Background(), bson.M{"_id": oid},
+		bson.M{"$set": bson.M{"booking_status": "rejected", "updated_at": time.Now()}})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject booking"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "booking rejected"})
+}
+
+// --- Income Data ---
+func (h *Handlers) GetIncomeData(c *gin.Context) {
+	ownerId := c.Param("ownerId")
+	period := c.Query("period") // e.g., "2025-11" (YYYY-MM)
+	oid, _ := primitive.ObjectIDFromHex(ownerId)
+	rukoIDs := getOwnerRukoIDs(h, oid)
+
+	// ambil bookings sesuai period
+	cursor, _ := h.db.Collection("bookings").Find(context.Background(), bson.M{
+		"ruko_id":        bson.M{"$in": rukoIDs},
+		"booking_status": "confirmed",
+		"start_date":     bson.M{"$gte": parsePeriodStart(period)},
+		"end_date":       bson.M{"$lte": parsePeriodEnd(period)},
+	})
+	var bookings []Booking
+	cursor.All(context.Background(), &bookings)
+	var total float64
+	for _, b := range bookings {
+		total += b.TotalPrice
+	}
+	c.JSON(http.StatusOK, gin.H{"income": total})
+}
+
+func parsePeriodStart(period string) time.Time {
+	t, _ := time.Parse("2006-01", period)
+	return t
+}
+
+func parsePeriodEnd(period string) time.Time {
+	t, _ := time.Parse("2006-01", period)
+	return t.AddDate(0, 1, -1)
+}
+
+// --- Recent Activities ---
+func (h *Handlers) GetRecentActivities(c *gin.Context) {
+	ownerId := c.Param("ownerId")
+	oid, _ := primitive.ObjectIDFromHex(ownerId)
+	rukoIDs := getOwnerRukoIDs(h, oid)
+
+	cursor, _ := h.db.Collection("bookings").Find(context.Background(), bson.M{"ruko_id": bson.M{"$in": rukoIDs}}, nil)
+	var bookings []Booking
+	cursor.All(context.Background(), &bookings)
+
+	// contoh 5 aktivitas terakhir
+	activities := bookings
+	if len(activities) > 5 {
+		activities = activities[len(activities)-5:]
+	}
+	c.JSON(http.StatusOK, activities)
+}
