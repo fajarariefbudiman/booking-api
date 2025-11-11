@@ -83,6 +83,26 @@ func (h *Handlers) GetUser(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+func (h *Handlers) ListUsers(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cursor, err := h.db.Collection("users").Find(ctx, bson.M{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var users []User
+	if err := cursor.All(ctx, &users); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode users"})
+		return
+	}
+
+	c.JSON(http.StatusOK, users)
+}
+
 // CreateRuko
 func (h *Handlers) CreateRuko(c *gin.Context) {
 	collections, _ := h.db.ListCollectionNames(context.Background(), bson.D{})

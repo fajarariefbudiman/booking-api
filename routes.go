@@ -55,7 +55,6 @@ func SetupRoutes(r *gin.Engine, h *Handlers) {
 				owner.GET("/:ownerId/income", h.GetIncomeData)
 				owner.GET("/:ownerId/activities/recent", h.GetRecentActivities)
 			}
-
 			// accept/reject booking
 			authed.PUT("/bookings/:id/accept", h.AcceptBooking)
 			authed.PUT("/bookings/:id/reject", h.RejectBooking)
@@ -64,6 +63,13 @@ func SetupRoutes(r *gin.Engine, h *Handlers) {
 			authed.GET("/discounts", h.ListDiscounts)
 			authed.POST("/discounts", h.CreateDiscount)
 			authed.GET("/rental-history", h.ListRentalHistory)
+
+			admin := authed.Group("/")
+			admin.Use(RoleMiddleware("admin"))
+			{
+				admin.GET("/users", h.ListUsers)
+			}
+
 		}
 	}
 }
