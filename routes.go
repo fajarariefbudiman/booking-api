@@ -24,6 +24,7 @@ func SetupRoutes(r *gin.Engine, h *Handlers) {
 		api.POST("/auth/register", h.Register)
 		api.POST("/auth/login", h.Login)
 
+		
 		// public ruko listing
 		api.GET("/ruko", h.ListRuko)
 		api.GET("/ruko/:id", h.GetRuko)
